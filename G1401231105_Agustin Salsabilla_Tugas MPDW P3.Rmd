@@ -1,0 +1,304 @@
+---
+title: "Tugas MPDW Pertemuan 3"
+author: "Agustin Salsabilla"
+date: "2025-09-14"
+output: html_document
+editor_options: 
+  markdown: 
+    wrap: sentence
+---
+
+# Library Data
+
+```{r}
+library(readxl)
+library(tseries)     
+library(dynlm)        
+library(lmtest)       
+library(forecast)     
+library(ggplot2) 
+library(lubridate)
+library(reshape2)
+library(dplyr)
+library(car)
+```
+
+# Import Data
+
+```{r}
+aqi_data <- read_xlsx("C:/Users/salsa/Downloads/NewDelhi_Air_quality (1).xlsx")
+aqi_data
+```
+
+# Cek Korelasi Tiap Polutan dan Memilih Peubah X
+
+```{r}
+# Ubah data ke long format
+air_long <- melt(aqi_data,
+                 id.vars = c("datetime", "AQI"),
+                 measure.vars = c("pm25", "pm10", "CO", "so2", "no2", "o3"),
+                 variable.name = "Polutan",
+                 value.name = "Konsentrasi")
+
+# Hitung korelasi tiap polutan dengan AQI
+cor_vals <- air_long %>%
+  group_by(Polutan) %>%
+  summarise(korelasi = cor(AQI, Konsentrasi, use = "pairwise.complete.obs")) %>%
+  mutate(label_r = paste0("r = ", round(korelasi, 2)))
+
+print(cor_vals)
+
+# Plot hubungan AQI dengan tiap polutan
+ggplot(air_long, aes(Konsentrasi, AQI)) +
+  geom_point(color = "blue", alpha = 0.5) +           # titik data
+  geom_smooth(method = "lm", color = "darkorange") + # garis trend
+  facet_wrap(~Polutan, scales = "free") +
+  geom_text(data = cor_vals, 
+            aes(x = max(air_long$Konsentrasi, na.rm = TRUE), 
+                y = max(air_long$AQI, na.rm = TRUE), 
+                label = label_r),
+            inherit.aes = FALSE, hjust = 1.1, vjust = 1.1) +
+  labs(title = "Hubungan AQI dengan Konsentrasi Polutan",
+       x = "Konsentrasi Polutan", y = "Air Quality Index") +
+  theme_bw() +
+  theme(strip.text = element_text(size = 10, face = "bold"))
+
+```
+
+Variabel X terbaik untuk dipilih adalah O3, karena memiliki korelasi paling tinggi (r = 0.97) dengan AQI.
+# Eksplorasi Data
+
+```{r}
+aqi_data_ts <- ts(aqi_data$AQI)
+summary(aqi_data_ts)
+```
+
+```{r}
+# Ubah ke time series
+aqi.ts <- ts(aqi_data$AQI)
+o3.ts  <- ts(aqi_data$o3)
+
+# Statistik deskriptif
+summary(aqi.ts)
+summary(o3.ts)
+
+# Plot time series AQI & O3
+par(mfrow=c(2,1))
+ts.plot(aqi.ts, main="Time Series AQI", ylab="AQI", col="blue")
+ts.plot(o3.ts, main="Time Series O3", ylab="O3", col="darkgreen")
+par(mfrow=c(1,1))
+
+# Boxplot AQI dan O3
+par(mfrow=c(1,2))  # bagi layar jadi 1 baris 2 kolom
+boxplot(aqi_data$AQI, main="Boxplot AQI", col="lightblue", ylab="AQI")
+boxplot(aqi_data$o3, main="Boxplot O3", col="lightgreen", ylab="O3")
+par(mfrow=c(1,1))  # reset layout
+```
+
+Hasil boxplot menunjukkan bahwa kualitas udara di New Delhi (AQI) umumnya stabil pada kisaran sedang dengan sedikit variasi, meskipun ada beberapa hari dengan kondisi udara yang lebih baik dari biasanya (outlier).
+Sementara itu, kadar O3 cenderung lebih berfluktuasi dengan sebaran nilai yang lebih lebar, menandakan bahwa konsentrasi ozon di udara lebih mudah berubah dari waktu ke waktu.
+# Pengecekan Asumsi
+
+```{r}
+# Ambil residual dari model
+resid_lm <- residuals(lm_model)
+
+# Plot residual terhadap waktu
+plot(resid_lm, type = "l",
+     main = "Plot Residual terhadap Waktu",
+     xlab = "Waktu", ylab = "Residual",
+     col = "blue")
+
+abline(h = 0, col = "red", lty = 2)   # garis horizontal nol
+
+# Plot ACF (Autocorrelation Function)
+acf(resid_lm,
+    main = "ACF Residual Model")
+
+# Plot PACF (Partial Autocorrelation Function)
+pacf(resid_lm,
+     main = "PACF Residual Model")
+
+# Uji Durbin-Watson
+lm_model <- lm(AQI ~ o3, data=aqi_data)
+dwtest(lm_model)
+```
+
+Berdasarkan grafik residual maupun hasil uji Durbin–Watson, model regresi linier yang digunakan mengalami masalah autokorelasi residual positif.
+Artinya, kesalahan pada periode tertentu cenderung berkorelasi dengan kesalahan pada periode berikutnya.
+Hal ini membuat asumsi klasik regresi tidak terpenuhi sehingga estimasi OLS bisa menjadi tidak efisien.
+# Splitting Data
+
+```{r}
+n <- length(aqi.ts)
+train_size <- round(0.7 * n)
+
+aqi_train <- window(aqi.ts, end = c(train_size))
+aqi_test  <- window(aqi.ts, start = c(train_size+1))
+
+o3_train <- window(o3.ts, end = c(train_size))
+o3_test  <- window(o3.ts, start = c(train_size+1))
+
+# Splitting Data (70% train - 30% test)
+n <- length(aqi.ts)
+train_size <- round(0.7 * n)
+
+aqi_train <- window(aqi.ts, end = c(train_size))
+aqi_test  <- window(aqi.ts, start = c(train_size+1))
+
+o3_train <- window(o3.ts, end = c(train_size))
+o3_test  <- window(o3.ts, start = c(train_size+1))
+
+# Plot Train vs Test
+plot(aqi.ts, type="l", col="black", lwd=2,
+     main="Splitting Data AQI: Train vs Test",
+     ylab="AQI", xlab="Time")
+abline(v = train_size, col="red", lty=2, lwd=2) # garis pemisah
+lines(aqi_train, col="blue", lwd=2)
+lines(aqi_test, col="green", lwd=2)
+legend("topleft", legend=c("Data Full", "Train", "Test"),
+       col=c("black", "blue", "green"), lty=1, lwd=2)
+
+```
+
+## Model Koyck
+
+**Formula Umum:**
+
+$$ y_t=a(1-\lambda)+\beta_0X_t+\beta_1Z_t+\lambda Y_{t-1}+V_t $$
+
+dengan $$V_t=u_t-\lambda u_{t-1}$$
+
+Di mana $\lambda$ (koefisien dari $Y_{t−1}$) menunjukkan "tingkat peluruhan" atau seberapa cepat pengaruh masa lalu memudar.
+
+```{r}
+model_koyck <- dynlm(aqi_train ~ L(aqi_train, 1) + o3_train)
+summary(model_koyck)
+```
+
+```{r}
+# Buat Data Frame Train & Test
+train_df <- data.frame(AQI = as.numeric(aqi_train),
+                       O3  = as.numeric(o3_train))
+
+test_df <- data.frame(AQI = as.numeric(aqi_test),
+                      O3  = as.numeric(o3_test))
+
+# Model dengan data train 
+model_terbaik <- lm(AQI ~ O3, data = train_df)
+
+# Prediksi Train & Test 
+fitted_train <- fitted(model_terbaik)
+pred_test <- predict(model_terbaik, newdata = test_df)
+
+# Fungsi MAPE
+mape <- function(actual, forecast) {
+  n <- min(length(actual), length(forecast))
+  mean(abs((actual[1:n] - forecast[1:n]) / actual[1:n])) * 100
+}
+
+mape_train <- mape(train_df$AQI, fitted_train)
+mape_test <- mape(test_df$AQI, pred_test)
+
+cat("MAPE Train: ", round(mape_train, 2), "%\n")
+cat("MAPE Test: ", round(mape_test, 2), "%\n")
+
+# Plot Data Aktual vs Prediksi 
+plot(aqi.ts, type="l", col="black", lwd=2,
+     main="Prediksi Model vs Data Aktual",
+     ylab="AQI", xlab="Time")
+
+# Prediksi train (biru)
+lines(1:train_size, fitted_train, col="blue", lwd=2)
+
+# Prediksi test (hijau)
+lines((train_size+1):n, pred_test, col="green", lwd=2)
+
+# Garis pemisah
+abline(v = train_size, col="red", lty=2)
+
+legend("topleft",
+       legend=c("Data Aktual", "Prediksi Train", "Prediksi Test"),
+       col=c("black", "blue", "green"),
+       lty=1, lwd=2)
+
+
+```
+
+# Distributed Lag Model
+
+```{r}
+model_dlm <- dynlm(aqi_train ~ L(o3_train, 0:2))  # lag 0,1,2
+summary(model_dlm)
+
+```
+
+-   Pengaruh O₃ pada periode saat ini (lag 0) sangat kuat dan signifikan.
+-   Pengaruh O₃ periode sebelumnya (lag 1 dan lag 2) hampir nol dan tidak signifikan.
+-   Jadi, AQI lebih dipengaruhi oleh konsentrasi O₃ pada waktu yang sama, bukan dari nilai historis O₃. \# Autoregressive Lag Model (ARLM)
+
+```{r}
+model_arlm <- dynlm(aqi_train ~ L(aqi_train, 1) + L(o3_train, 0:2))
+summary(model_arlm)
+```
+
+Model ARDL ini menunjukkan bahwa AQI saat ini dipengaruhi oleh AQI periode sebelumnya dan konsentrasi O₃ pada periode yang sama.
+O₃ satu dan dua periode sebelumnya tidak memberikan pengaruh berarti.
+Jadi, hubungan O₃–AQI lebih bersifat langsung (immediate effect) dibandingkan lagged effect..
+# Perbandingan Model
+
+```{r}
+#-----------------------------------------------------------
+# Perbandingan Model dengan AIC dan MSE
+#-----------------------------------------------------------
+
+# AIC
+aic_values <- data.frame(
+  Model = c("Koyck", "DLM", "ARLM"),
+  AIC   = c(AIC(koyck_model), AIC(dlm_model), AIC(arlm_model))
+)
+
+# Fungsi MSE (lebih sederhana)
+mse <- function(model){
+  mean(residuals(model)^2)
+}
+
+# MSE
+mse_values <- data.frame(
+  Model = c("Koyck", "DLM", "ARLM"),
+  MSE   = c(mse(koyck_model),
+            mse(dlm_model),
+            mse(arlm_model))
+)
+
+# Gabungkan AIC dan MSE
+comparison <- merge(aic_values, mse_values, by="Model")
+print(comparison)
+
+```
+
+Model ARLM (Autoregressive Distributed Lag) adalah yang paling baik untuk memodelkan hubungan AQI dengan O₃.Model ini tidak hanya lebih akurat (MSE rendah), tapi juga lebih efisien (AIC rendah).
+
+# Pengecekan Asumsi Model Terbaik
+
+```{r}
+# Residual
+resid_arlm <- residuals(model_arlm)
+
+# Plot residual
+plot(resid_arlm, type="l", main="Residual ARLM")
+
+# Uji autokorelasi
+dwtest(model_arlm)
+
+# Uji normalitas residual
+shapiro.test(resid_arlm)
+
+# Uji heteroskedastisitas (Breusch-Pagan)
+bptest(model_arlm)
+```
+
+-   Autokorelasi: Tidak terdeteksi (DW test).
+-   Normalitas: Error tidak berdistribusi normal (Shapiro-Wilk).
+-   Homoskedastisitas: Terjadi heteroskedastisitas (Breusch-Pagan).
+-   Kesimpulan: Model ARLM cukup baik dari sisi prediksi, namun asumsi normalitas dan homoskedastisitas belum terpenuhi.
