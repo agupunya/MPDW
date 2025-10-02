@@ -1,0 +1,101 @@
+---
+title: "Tugas P5 MPDW"
+author: "Agustin Salsabilla"
+date: "2025-10-02"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(ggplot2)
+library(tsibble)
+library(tseries)
+library(MASS)
+library(forecast)
+library(graphics)
+library(TTR)
+library(TSA)
+library(rio)
+library(ggplot2)
+```
+```{r}
+library(readxl)
+data <- read_xlsx("C:/Users/salsa/Downloads/Page Loads.xlsx")
+data <- data[201:300, ]
+head(data)
+```
+# Eksplorasi Data 
+```{r}
+View(data)
+str(data)
+dim(data)
+```
+### Mengubah data agar terbaca sebagai data deret waktu dengan fungsi `ts()` .
+```{r}
+data.ts <- ts(data$Page.Loads)
+```
+### Menampilkan ringkasan data
+```{r}
+summary(data.ts)
+```
+### Membuat plot data deret waktu
+```{r}
+ts.plot(data.ts, xlab="Time Period ", ylab="Reading", 
+        main = "Time Series Plot")
+points(data.ts)
+mean(data.ts)
+```
+```{r}
+lattice::densityplot(as.vector(data.ts))
+```
+Plot distribusi di atas menunjukkan bahwa **data belum stasioner dalam rataan**, ditandai dengan adanya dua puncak kepadatan (sekitar 4000 dan 5000–6000) sehingga nilai tengahnya tidak tunggal. Data juga belum stasioner dalam ragam karena sebaran nilai cukup lebar (1000 hingga 8000), menandakan fluktuasi varians yang tidak konstan.
+### Plot ACF
+```{r}
+acf(data.ts)
+```
+Plot ACF menunjukkan bahwa nilai autokorelasi menurun secara lambat dan masih signifikan pada beberapa lag, sehingga data belum stasioner. Jika data akan dimodelkan lebih lanjut, perlu dilakukan transformasi seperti differencing agar stasioner.
+### Uji ADF 
+```{r}
+tseries::adf.test(data.ts)
+```
+Berdasarkan hasil uji ADF, diperoleh nilai statistik uji Dickey-Fuller sebesar -5.4795 dengan *p-value* = 0.01. Karena p-value lebih kecil dari taraf nyata 5% (0.05), maka keputusan uji adalah menolak $H_0$. Dengan demikian, data **stasioner dalam rataan**. Hasil ini konsisten dengan analisis grafik time series dan plot ACF yang juga menunjukkan tidak adanya tren jangka panjang yang kuat.
+### Cek apakah data keseluruhan positif atau tidak
+```{r}
+summary(data.ts)
+min(data.ts)
+```
+Karena ada yang kurang dari sama dengan 0, diperlukan transformasi shift agar semua positif. 
+### Geser dengan menambahkan konstanta agar positif
+```{r}
+data_shift <- data.ts + abs(min(data.ts)) + 1
+```
+### Plot Box-Cox
+```{r}
+index <- seq_along(data_shift)
+
+# Regresi dengan data sudah positif
+model <- lm(data_shift ~ index)
+
+# Plot Box-Cox
+bc <- boxcox(
+  model,
+  lambda = seq(-1, 4, by = 0.01)
+)
+
+# Nilai lambda optimum
+lambda <- bc$x[which.max(bc$y)]
+lambda
+
+# Selang kepercayaan 95% untuk lambda
+ci_lambda <- bc$x[bc$y > max(bc$y) - 0.5 * qchisq(0.95, 1)]
+c(Batas_Bawah = min(ci_lambda), Batas_Atas = max(ci_lambda))
+
+```
+Gambar menunjukkan nilai λ optimum (dibulatkan) sebesar **1** dengan selang kepercayaan 95% untuk λ berada pada sekitar **0,7 hingga 1,5**. Karena selang kepercayaan ini memuat nilai **1**, maka transformasi Box-Cox dengan λ = 1 (tidak melakukan transformasi) masih sesuai. Dengan kata lain, data dapat dianggap sudah stasioner dalam ragam, sehingga tidak diperlukan transformasi tambahan untuk menstabilkan ragam.
+
+
+
+
