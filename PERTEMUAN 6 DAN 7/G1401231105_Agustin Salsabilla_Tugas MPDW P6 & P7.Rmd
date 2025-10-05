@@ -1,0 +1,284 @@
+---
+title: "Tugas MPDW P6 dan P7"
+author: "Agustin Salsabilla"
+date: "2025-10-03"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r}
+library(ggplot2)
+library(tsibble)
+library(tseries)
+library(MASS)
+library(forecast)
+library(TSA)
+library(TTR)
+library(aTSA)
+library(graphics)
+```
+```{r}
+library(readxl)
+data <- read_xlsx("C:/Users/salsa/Downloads/Page Loads.xlsx")
+data <- data[201:300, ]
+head(data)
+```
+# Eksplorasi Data 
+```{r}
+View(data)
+str(data)
+dim(data)
+```
+### Mengubah data agar terbaca sebagai data deret waktu dengan fungsi `ts()` .
+```{r}
+data.ts <- ts(data$Page.Loads)
+```
+### Menampilkan ringkasan data
+```{r}
+summary(data.ts)
+```
+### Membuat plot data deret waktu
+```{r}
+ts.plot(data.ts, xlab="Time Period ", ylab="Reading", 
+        main = "Time Series Plot")
+points(data.ts)
+mean(data.ts)
+```
+# Pembagian Data
+Pembagian data latih dan data uji dilakukan dengan perbandingan 80% data latih dan 20% data uji.
+```{r}
+#membagi data latih dan data uji
+training_ma <- data[1:80,]
+testing_ma <- data[81:100,]
+train_ma.ts <- ts(training_ma$Page.Loads)
+test_ma.ts <- ts(testing_ma$Page.Loads)
+```
+# Eksplorasi Data
+Eksplorasi data dilakukan pada keseluruhan data, data latih serta data uji menggunakan plot data deret waktu.
+### Eksplorasi keseluruhan data
+```{r}
+plot(data.ts, col="red",main="Plot semua data")
+points(data.ts)
+```
+### Eksplorasi data latih
+```{r}
+plot(train_ma.ts, col="blue",main="Plot data latih")
+points(train_ma.ts)
+```
+### Eksplorasi data uji
+```{r}
+plot(test_ma.ts, col="blue",main="Plot data uji")
+points(test_ma.ts)
+```
+# Uji Stasioneritas 
+### Plot ACF 
+```{r}
+acf(data.ts)
+```
+Terjadi cut off pada lag ke-2. Masih bisa dikatakan belum stasioner secara rataan.
+### Uji ADF 
+```{r}
+tseries::adf.test(data.ts)
+```
+Berdasarkan hasil uji ADF, diperoleh nilai statistik uji Dickey-Fuller sebesar -5.4795 dengan *p-value* = 0.01. Karena p-value lebih kecil dari taraf nyata 5% (0.05), maka keputusan uji adalah menolak $H_0$. Dengan demikian, data **stasioner dalam rataan**. Hasil ini konsisten dengan analisis grafik time series dan plot ACF yang juga menunjukkan tidak adanya tren jangka panjang yang kuat.
+### Cek apakah data keseluruhan positif atau tidak
+```{r}
+summary(data.ts)
+min(data.ts)
+```
+Karena ada yang kurang dari sama dengan 0, diperlukan transformasi shift agar semua positif. 
+### Geser dengan menambahkan konstanta agar positif
+```{r}
+data_shift <- data.ts + abs(min(data.ts)) + 1
+```
+### Plot Box-Cox
+```{r}
+index <- seq_along(data_shift)
+
+# Regresi dengan data sudah positif
+model <- lm(data_shift ~ index)
+
+# Plot Box-Cox
+bc <- boxcox(
+  model,
+  lambda = seq(-1, 4, by = 0.01)
+)
+
+# Nilai lambda optimum
+lambda <- bc$x[which.max(bc$y)]
+lambda
+
+# Selang kepercayaan 95% untuk lambda
+ci_lambda <- bc$x[bc$y > max(bc$y) - 0.5 * qchisq(0.95, 1)]
+c(Batas_Bawah = min(ci_lambda), Batas_Atas = max(ci_lambda))
+```
+Data dapat dikatakan stasioner dalam ragam.
+# Penanganan Ketidakstasioneran
+### Diferensiasi Pertama 
+```{r}
+train.diff<-diff(train_ma.ts,differences = 1) 
+plot.ts(train.diff, lty=1, xlab="Time Period", ylab="Reading", main="Time Series Plot")
+```
+### Plot ACF 
+```{r}
+acf(train.diff)
+```
+### Uji ADF 
+```{r}
+tseries::adf.test(train.diff)
+```
+### Plot Box-Cox 
+```{r}
+min(train.diff)
+```
+```{r}
+train.diff.box <- train.diff - min(train.diff) + 0.001
+index <- seq_along(train.diff.box)
+bc <- boxcox(train.diff.box ~ index, lambda = seq(-2, 2, by = 0.1))
+lambda.opt <- bc$x[which.max(bc$y)]
+ci <- bc$x[bc$y > max(bc$y) - qchisq(0.95, 1) / 2]
+lambda.lower <- min(ci)
+lambda.upper <- max(ci)
+```
+```{r}
+cat("Nilai lambda optimum:", round(lambda.opt, 2), "\n")
+cat("Batas bawah 95%:", round(lambda.lower, 2), "\n")
+cat("Batas atas 95%:", round(lambda.upper, 2), "\n")
+```
+Dari hasil uji Box-Cox diperoleh nilai λ optimum sebesar 0,51 dengan selang kepercayaan 95% antara 0,38 hingga 0,71. Data dikatakan sudah stasioner dalam ragam.
+# Identifikasi Model 
+### Plot ACF 
+```{r}
+acf(train.diff)
+```
+Berdasarkan grafik terjadi cut off pada lag ke-1 dan ke-6, maka model tentatifnya ARIMA(0,1,1).
+### Plot PACF
+```{r}
+pacf(train.diff)
+```
+Berdasarkan grafik terjadi cut off pada lag ke-1, maka model tentatifnya ARIMA(0,1,2).
+### Plot EACF 
+```{r}
+eacf(train.diff)
+```
+Identifikasi model menggunakan plot EACF dilakukan dengan melihat ujung segitiga pada pola segitiga nol. Model tentatif yang terbentuk adalah ARIMA(1,1,1), ARIMA(2,1,1), ARIMA(3,1,1), ARIMA(1,1,2), ARIMA(2,1,2).
+# Pendugaan Parameter Model Tentatif 
+### Model ARIMA(0,1,1)
+```{r}
+model1=Arima(train.diff, order=c(0,0,1),method="ML")
+summary(model1) #AIC=1309.38
+lmtest::coeftest(model1) #terdapat parameter tak signifikan
+```
+### Model ARIMA(2,1,1)
+```{r}
+model2=Arima(train.diff, order=c(2,1,1),method="ML")
+summary(model2) #AIC=1291.71 
+lmtest::coeftest(model2) #seluruh parameter signifikan
+```
+### Model ARIMA(1,1,2)
+```{r}
+model3=Arima(train.diff, order=c(1,1,2),method="ML")
+summary(model3) #AIC=1294.65
+lmtest::coeftest(model3) #terdapat parameter tak signifikan
+```
+Berdasarkan pendugaan parameter di atas, nilai AIC terkecil dimiliki oleh model ARIMA(2,1,1) dan parameter modelnya juga seluruhnya signifikan, sehingga model yang dipilih adalah model ARIMA(2,1,1).
+# Analisis Sisaan 
+Model terbaik sudah dipilih, tapi apakah ia "sehat"? Sisaan (*residuals*) dari model yang baik harus memenuhi beberapa asumsi:
+
+-   **Normalitas:** Sisaan menyebar normal.
+
+-   **Independensi:** Tidak ada autokorelasi antar sisaan (saling bebas).
+
+-   **Homoskedastisitas:** Ragam sisaan homogen (konstan).
+
+-   **Rataan Nol:** Rata-rata sisaan sama dengan nol.
+### Eksplorasi Sisaan
+#### ARIMA(2,1,1)
+```{r}
+#Eksplorasi
+sisaan1 <- model3$residuals
+par(mfrow=c(2,2))
+#qqnorm(sisaan1)
+#qqline(sisaan1, col = "blue", lwd = 2)
+car::qqPlot(sisaan1)
+plot(c(1:length(sisaan1)),sisaan1)
+acf(sisaan1)
+pacf(sisaan1)
+par(mfrow = c(1,1))
+```
+Berdasarkan plot kuantil-kuantil normal, secara eksplorasi ditunjukkan sisaan tidak menyebar normal ditandai dengan titik titik yang cenderung tidak mengikuti garis 45∘. Sedangkan berdasarkan lebar pita plot sisaan, homoskedastisitas dan nilai harapan nol terpenuhi. Lalu pada plot ACF dan PACF mengindikasikan tidak terdapat autokorelasi.
+### Uji Formal 
+```{r}
+#1) Sisaan Menyebar Normal
+ks.test(sisaan1,"pnorm") 
+#tak tolak H0 > sisaan tak menyebar normal
+```
+$H_0$ : Sisaan menyebar normal
+
+$H_1$ : Sisaan tidak menyebar normal
+
+Berdasarkan uji KS tersebut, didapat *p-value* sebesar 2.22e-16 yang kurang dari taraf nyata 5% sehingga tolak $H_0$ dan menandakan bahwa sisaan tidak menyebar normal. Hal ini tidak sesuai dengan hasil eksplorasi menggunakan plot kuantil-kuantil normal.
+```{r}
+#2) Sisaan saling bebas/tidak ada autokorelasi
+Box.test(sisaan1, type = "Ljung") 
+#tak tolak H0 > sisaan saling bebas
+```
+$H_0$ : Sisaan saling bebas
+
+$H_1$ : Sisaan tidak tidak saling bebas
+
+Berdasarkan uji Ljung-Box tersebut, didapat *p-value* sebesar 0.7068 yang lebih besar dari taraf nyata 5% sehingga tak tolak $H_0$ dan menandakan bahwa sisaan saling bebas. Hal ini sesuai dengan eksplorasi.
+```{r}
+#3) Sisaan homogen
+Box.test((sisaan1)^2, type = "Ljung") 
+#tak tolak H0 > sisaan homogen
+```
+Hipotesis yang digunakan untuk uji kehomogenan ragam adalah sebagai berikut.
+
+$H_0$ : Ragam sisaan homogen
+
+$H_1$ : Ragam sisaan tidak homogen
+
+Berdasarkan uji Ljung-Box terhadap sisaan kuadrat tersebut, didapat *p-value* sebesar 0.03713 yang lebih kecil dari taraf nyata 5% sehingga  tolak $H_0$ dan menandakan bahwa ragam sisaan tidak homogen.
+```{r}
+#4) Nilai tengah sisaan sama dengan nol
+t.test(sisaan1, mu = 0, conf.level = 0.95) 
+#tak tolak h0 > nilai tengah sisaan sama dengan 0
+```
+$H_0$ : nilai tengah sisaan sama dengan 0
+
+$H_1$ : nilai tengah sisaan tidak sama dengan 0
+
+Berdasarkan uji-ttersebut, didapat *p-value* sebesar 0.7455 yang lebih besar dari taraf nyata 5% sehingga tolak $H_0$ dan menandakan bahwa nilai tengah sisaan sama dengan nol. Hal ini sesuai dengan eksplorasi.
+# Simpulan 
+Model ARIMA (2,1,1) tidak memenuhi asumsi kenormalan sisaan.
+# Overfitting 
+Tahapan selanjutnya adalah *overfitting* dilakukan dengan menaikkan orde AR(p) dan MA(q) dari model ARIMA(2,1,1) untuk melihat apakah terdapat model lain yang lebih baik dari model saat ini. Kandidat model *overfitting* adalah ARIMA(0,1,2).
+### Model ARIMA(0,1,2)
+```{r}
+model_ovf=Arima(train.diff, order=c(0,1,2),method="ML")
+summary(model_ovf) #AIC=1297.15
+lmtest::coeftest(model_ovf) #terdapat parameter tak signifikan
+```
+Hasil ARIMA (0,1,2) juga tidak lebih baik, sehingga model terbaik tetap ARIMA (2,1,1).
+# Peramalan
+Peramalan dilakukan menggunakan fungsi `forecast()` . Contoh peramalan berikut ini dilakukan untuk 30 hari ke depan.
+```{r}
+#---FORECAST---#
+ramalan <- forecast::forecast(model3, h = 30) 
+ramalan
+data.ramalan <- ramalan$mean
+plot(ramalan)
+```
+```{r}
+colnames(perbandingan)<-c("Aktual","Hasil Forecast")
+perbandingan
+```
+```{r}
+accuracy(ts(hasil[-1]), head(test.ts, n=30))
+```
+Model ARIMA (2,1,1) memiliki nilai MAPE kurang dari 10% sebesar 0.9426535, performa model baik untuk peramalan.
+
+
